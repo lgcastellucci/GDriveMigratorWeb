@@ -1,0 +1,72 @@
+@page
+@model GDriveMigrator.Pages.FoldersModel
+@{
+    ViewData["Title"] = "Selecionar Pasta";
+    var label = Model.AccountKey == "account1" ? "Conta 1 — Origem" : "Conta 2 — Destino";
+    var email = Model.AccountKey == "account1"
+        ? Model.Session.Account1.UserEmail
+        : Model.Session.Account2.UserEmail;
+    var action = Model.AccountKey == "account1" ? "pasta de origem" : "pasta de destino";
+}
+
+<div class="page-header">
+    <h1>Selecionar pasta — @label</h1>
+    <p class="subtitle">
+        Navegue pelas pastas de <strong>@email</strong> e selecione a @action.
+    </p>
+</div>
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+    <div class="alert alert-error">@Model.ErrorMessage</div>
+}
+
+<!-- Breadcrumb de navegação -->
+<div class="breadcrumb">
+    <a href="?accountKey=@Model.AccountKey&parentId=root">🏠 Meu Drive</a>
+    @foreach (var crumb in Model.Breadcrumbs)
+    {
+        <span class="sep">›</span>
+        <a href="?accountKey=@Model.AccountKey&parentId=@crumb.Id">@crumb.Name</a>
+    }
+</div>
+
+<!-- Lista de pastas -->
+<div class="folder-list">
+    @if (Model.Folders.Count == 0)
+    {
+        <div class="empty-folders">📂 Nenhuma subpasta encontrada aqui.</div>
+    }
+    else
+    {
+        @foreach (var folder in Model.Folders)
+        {
+            <div class="folder-row">
+                <a class="folder-name"
+                   href="?accountKey=@Model.AccountKey&parentId=@folder.Id&@(Model.BuildBreadcrumbQuery(folder))">
+                    📁 @folder.Name
+                </a>
+                <form method="post" asp-page-handler="Select" style="display:inline">
+                    <input type="hidden" name="accountKey" value="@Model.AccountKey" />
+                    <input type="hidden" name="folderId" value="@folder.Id" />
+                    <input type="hidden" name="folderName" value="@folder.Name" />
+                    <button type="submit" class="btn btn-sm btn-primary">✓ Selecionar</button>
+                </form>
+            </div>
+        }
+    }
+</div>
+
+<!-- Selecionar pasta atual -->
+<div class="select-current">
+    <form method="post" asp-page-handler="Select">
+        <input type="hidden" name="accountKey" value="@Model.AccountKey" />
+        <input type="hidden" name="folderId" value="@Model.CurrentParentId" />
+        <input type="hidden" name="folderName"
+               value="@(Model.Breadcrumbs.LastOrDefault()?.Name ?? "Meu Drive")" />
+        <button type="submit" class="btn btn-secondary">
+            📌 Usar a pasta atual
+            (@(Model.Breadcrumbs.LastOrDefault()?.Name ?? "Meu Drive"))
+        </button>
+    </form>
+</div>

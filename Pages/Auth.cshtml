@@ -1,0 +1,125 @@
+@page
+@model GDriveMigrator.Pages.AuthModel
+@{
+    ViewData["Title"] = "Autenticação";
+    var label = Model.AccountKey == "account1" ? "Conta 1 — Origem" : "Conta 2 — Destino";
+    var email = Model.AccountKey == "account1"
+        ? Model.Session.Account1.UserEmail
+        : Model.Session.Account2.UserEmail;
+}
+
+<div class="page-header">
+    <h1>Autenticação — @label</h1>
+    <p class="subtitle">Autorize o acesso ao Google Drive para <strong>@email</strong></p>
+</div>
+
+@if (Model.AlreadyAuthenticated)
+{
+    <div class="alert alert-ok">✓ Esta conta já está autenticada.</div>
+    <div class="btn-row">
+        @if (Model.AccountKey == "account1")
+        {
+            <a href="/Setup?step=2" class="btn btn-primary">Continuar para Conta 2 →</a>
+        }
+        else
+        {
+            <a href="/Setup?step=3" class="btn btn-primary">Continuar para Opções →</a>
+        }
+        <form method="post" asp-page-handler="Reauthenticate" style="display:inline">
+            <input type="hidden" name="accountKey" value="@Model.AccountKey" />
+            <button type="submit" class="btn btn-secondary">🔄 Reautenticar</button>
+        </form>
+    </div>
+}
+else
+{
+    <!-- Seletor de método -->
+    <div class="method-tabs">
+        <button class="tab-btn @(Model.UseManual ? "active" : "")"
+                onclick="setMethod(true)">✍ Manual (copy/paste)</button>
+        <button class="tab-btn @(!Model.UseManual ? "active" : "")"
+                onclick="setMethod(false)">🌐 Browser automático</button>
+    </div>
+
+    <!-- ── Método Manual ── -->
+    <div id="tab-manual" class="tab-content @(Model.UseManual ? "" : "hidden")">
+        <div class="card-form">
+            <p class="hint">
+                Copie o link abaixo, abra no browser, faça login com <strong>@email</strong>,
+                autorize o acesso e cole o código retornado pelo Google.
+            </p>
+
+            @if (!string.IsNullOrEmpty(Model.AuthUrl))
+            {
+                <div class="field">
+                    <label>Link de autorização</label>
+                    <div class="copy-row">
+                        <input type="text" id="authUrl" value="@Model.AuthUrl" readonly />
+                        <button type="button" class="btn btn-secondary"
+                                onclick="copyUrl()">📋 Copiar</button>
+                        <a href="@Model.AuthUrl" target="_blank" class="btn btn-secondary">↗ Abrir</a>
+                    </div>
+                </div>
+
+                <form method="post" asp-page-handler="SubmitCode">
+                    <input type="hidden" name="accountKey" value="@Model.AccountKey" />
+                    <div class="field">
+                        <label>Código retornado pelo Google</label>
+                        <input type="text" name="code" placeholder="4/0AX4XfWh..." required
+                               autofocus autocomplete="off" />
+                    </div>
+                    @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+                    {
+                        <div class="alert alert-error">@Model.ErrorMessage</div>
+                    }
+                    <div class="btn-row">
+                        <button type="submit" class="btn btn-primary">✓ Validar código</button>
+                    </div>
+                </form>
+            }
+            else
+            {
+                <form method="post" asp-page-handler="GenerateManualUrl">
+                    <input type="hidden" name="accountKey" value="@Model.AccountKey" />
+                    <button type="submit" class="btn btn-primary">Gerar link de autorização</button>
+                </form>
+            }
+        </div>
+    </div>
+
+    <!-- ── Método Browser ── -->
+    <div id="tab-browser" class="tab-content @(!Model.UseManual ? "" : "hidden")">
+        <div class="card-form">
+            <p class="hint">
+                Clique no botão abaixo. O Google abrirá uma janela de login.
+                Após autorizar, você será redirecionado de volta automaticamente.
+            </p>
+            <form method="post" asp-page-handler="StartBrowser">
+                <input type="hidden" name="accountKey" value="@Model.AccountKey" />
+                <div class="btn-row">
+                    <button type="submit" class="btn btn-primary">🌐 Abrir login do Google</button>
+                </div>
+            </form>
+        </div>
+    </div>
+}
+
+@section Scripts {
+    <script>
+        function setMethod(manual) {
+            document.getElementById('tab-manual').classList.toggle('hidden', !manual);
+            document.getElementById('tab-browser').classList.toggle('hidden', manual);
+            document.querySelectorAll('.tab-btn').forEach((b, i) => {
+                b.classList.toggle('active', manual ? i === 0 : i === 1);
+            });
+        }
+
+        function copyUrl() {
+            const el = document.getElementById('authUrl');
+            el.select();
+            document.execCommand('copy');
+            event.target.textContent = '✓ Copiado!';
+            setTimeout(() => event.target.textContent = '📋 Copiar', 2000);
+        }
+    </script>
+}

@@ -4,146 +4,91 @@ using Google.Apis.Auth.OAuth2.Responses;
 using Google.Apis.Drive.v3;
 using Google.Apis.Services;
 using Google.Apis.Util.Store;
-using GDriveMigrator.Models;
-using Microsoft.Extensions.Logging;
 
 namespace GDriveMigrator.Services;
 
-public class AuthService(ILogger<AuthService> logger)
+public class AuthService
 {
+    private const string CredentialsFile = "credentials.json";
+    private const string AppName = "GDriveMigrator";
+
     private static readonly string[] Scopes =
     [
-        DriveService.Scope.Drive,
-        DriveService.Scope.DriveFile
+        DriveService.Scope.Drive, // Ver, editar, criar e excluir todos os seus arquivos do Google Drive
+        DriveService.Scope.DriveFile // Ver, editar, criar e excluir apenas os arquivos do Google Drive que você usa com este app.
     ];
 
-    /// <summary>
-    /// Cria um DriveService autenticado para a conta informada.
-    /// Se já existe token salvo, usa direto.
-    /// Se não, exibe o link no terminal e aguarda o código de autorização.
-    /// </summary>
-    public async Task<DriveService> CreateDriveServiceAsync(
-        AccountSettings account,
-        string applicationName,
-        CancellationToken ct = default)
+    // ── Gera URL de autorização (manual ou redirect) ───────────────────────
+
+    public async Task<(string AuthUrl, GoogleAuthorizationCodeFlow Flow)> BuildAuthUrlAsync(
+        string tokenFolder,
+        string? redirectUri = null)
     {
-        if (!File.Exists(account.CredentialsFile))
-            throw new FileNotFoundException(
-                $"Arquivo '{account.CredentialsFile}' não encontrado. " +
-                "Coloque o credentials.json na pasta do projeto.");
+        var flow = await CreateFlowAsync(tokenFolder);
+        var req = flow.CreateAuthorizationCodeRequest(redirectUri ?? "urn:ietf:wg:oauth:2.0:oob");
+        var url = req.Build().AbsoluteUri;
+        return (url, flow);
+    }
 
-        await using var stream = new FileStream(account.CredentialsFile, FileMode.Open, FileAccess.Read);
-        var secrets = (await GoogleClientSecrets.FromStreamAsync(stream, ct)).Secrets;
+    // ── Troca código por token (fluxo manual) ─────────────────────────────
 
-        var tokenStore = new FileDataStore(account.TokenFolder, fullPath: false);
-
-        // Verifica se já existe token válido salvo
-        var flow = new GoogleAuthorizationCodeFlow(new GoogleAuthorizationCodeFlow.Initializer
+    public async Task<bool> ExchangeCodeAsync(string userEmail, string code, string tokenFolder, string? redirectUri = null, CancellationToken ct = default)
+    {
+        var flow = await CreateFlowAsync(tokenFolder);
+        try
         {
-            ClientSecrets = secrets,
-            Scopes = Scopes,
-            DataStore = tokenStore
-        });
-
-        var existingToken = await tokenStore.GetAsync<TokenResponse>(account.UserEmail);
-
-        UserCredential credential;
-
-        if (existingToken != null && !string.IsNullOrEmpty(existingToken.RefreshToken))
-        {
-            // Token já existe — usa sem pedir autorização novamente
-            logger.LogDebug("Token existente encontrado para {Email}", account.UserEmail);
-            credential = new UserCredential(flow, account.UserEmail, existingToken);
+            var token = await flow.ExchangeCodeForTokenAsync(userEmail, code, redirectUri ?? "urn:ietf:wg:oauth:2.0:oob", ct);
+            await new FileDataStore(tokenFolder, false).StoreAsync(userEmail, token);
+            return true;
         }
-        else
-        {
-            // Sem token — gera o link e pede o código manualmente
-            credential = await AuthorizeManuallyAsync(flow, secrets, account, tokenStore, ct);
-        }
+        catch { return false; }
+    }
 
+    // ── Cria DriveService a partir de token salvo ─────────────────────────
+
+    public async Task<DriveService?> CreateDriveServiceAsync(string userEmail, string tokenFolder, CancellationToken ct = default)
+    {
+        var flow = await CreateFlowAsync(tokenFolder);
+        var store = new FileDataStore(tokenFolder, false);
+        var token = await store.GetAsync<TokenResponse>(userEmail);
+        if (token == null) return null;
+
+        var credential = new UserCredential(flow, userEmail, token);
         return new DriveService(new BaseClientService.Initializer
         {
             HttpClientInitializer = credential,
-            ApplicationName = applicationName
+            ApplicationName = AppName
         });
     }
 
-    // ──────────────────────────────────────────────────────────────────────
-    // Fluxo manual: exibe link → aguarda código → troca por token
-    // ──────────────────────────────────────────────────────────────────────
+    // ── Verifica se já existe token válido salvo ───────────────────────────
 
-    private async Task<UserCredential> AuthorizeManuallyAsync(
-        GoogleAuthorizationCodeFlow flow,
-        ClientSecrets secrets,
-        AccountSettings account,
-        FileDataStore tokenStore,
-        CancellationToken ct)
+    public async Task<bool> HasValidTokenAsync(string userEmail, string tokenFolder)
     {
-        // Gera a URL de autorização
-        var authUrl = flow.CreateAuthorizationCodeRequest("urn:ietf:wg:oauth:2.0:oob").Build().AbsoluteUri;
-
-        Console.WriteLine();
-        Console.ForegroundColor = ConsoleColor.Yellow;
-        Console.WriteLine("  ┌─────────────────────────────────────────────────────────────┐");
-        Console.WriteLine("  │  Copie o link abaixo e abra no seu browser:                 │");
-        Console.WriteLine("  └─────────────────────────────────────────────────────────────┘");
-        Console.ResetColor();
-        Console.WriteLine();
-        Console.ForegroundColor = ConsoleColor.White;
-        Console.WriteLine($"  {authUrl}");
-        Console.ResetColor();
-        Console.WriteLine();
-        Console.ForegroundColor = ConsoleColor.DarkGray;
-        Console.WriteLine("  Passos:");
-        Console.WriteLine("    1. Abra o link acima no browser");
-        Console.WriteLine($"    2. Faça login com: {account.UserEmail}");
-        Console.WriteLine("    3. Autorize o acesso ao Google Drive");
-        Console.WriteLine("    4. Copie o código exibido pelo Google");
-        Console.WriteLine("    5. Cole o código abaixo e pressione Enter");
-        Console.ResetColor();
-        Console.WriteLine();
-
-        // Aguarda o código
-        string code;
-        while (true)
-        {
-            Console.ForegroundColor = ConsoleColor.White;
-            Console.Write("  Código de autorização: ");
-            Console.ResetColor();
-
-            code = Console.ReadLine()?.Trim() ?? string.Empty;
-
-            if (!string.IsNullOrWhiteSpace(code))
-                break;
-
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine("  ✗ Código não pode ser vazio. Tente novamente.");
-            Console.ResetColor();
-        }
-
-        // Troca o código pelo token
-        Console.WriteLine();
-        Console.ForegroundColor = ConsoleColor.DarkGray;
-        Console.WriteLine("  Validando código...");
-        Console.ResetColor();
-
-        TokenResponse token;
         try
         {
-            token = await flow.ExchangeCodeForTokenAsync(
-                account.UserEmail, code, "urn:ietf:wg:oauth:2.0:oob", ct);
+            var store = new FileDataStore(tokenFolder, false);
+            var token = await store.GetAsync<TokenResponse>(userEmail);
+            return token != null && !string.IsNullOrEmpty(token.RefreshToken);
         }
-        catch (Exception ex)
+        catch { return false; }
+    }
+
+    // ── Flow factory ──────────────────────────────────────────────────────
+
+    private static async Task<GoogleAuthorizationCodeFlow> CreateFlowAsync(string tokenFolder)
+    {
+        if (!File.Exists(CredentialsFile))
+            throw new FileNotFoundException($"Arquivo '{CredentialsFile}' não encontrado na raiz do projeto.");
+
+        await using var stream = new FileStream(CredentialsFile, FileMode.Open, FileAccess.Read);
+        var secrets = (await GoogleClientSecrets.FromStreamAsync(stream)).Secrets;
+
+        return new GoogleAuthorizationCodeFlow(new GoogleAuthorizationCodeFlow.Initializer
         {
-            throw new Exception(
-                $"Código inválido ou expirado. Tente novamente.\nDetalhe: {ex.Message}");
-        }
-
-        // Salva o token para execuções futuras
-        await tokenStore.StoreAsync(account.UserEmail, token);
-
-        logger.LogDebug("Token salvo em {Folder} para {Email}", account.TokenFolder, account.UserEmail);
-
-        return new UserCredential(flow, account.UserEmail, token);
+            ClientSecrets = secrets,
+            Scopes = Scopes,
+            DataStore = new FileDataStore(tokenFolder, false)
+        });
     }
 }

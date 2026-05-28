@@ -1,69 +1,68 @@
+using System.Text.Json.Serialization;
+
 namespace GDriveMigrator.Models;
 
-public class MigrationSettings
+public class AppSession
 {
-    public AccountSettings Account1 { get; set; } = new();
-    public AccountSettings Account2 { get; set; } = new();
+    public AccountConfig Account1 { get; set; } = new();
+    public AccountConfig Account2 { get; set; } = new();
     public MigrationOptions Options { get; set; } = new();
+
+    [JsonIgnore]
+    public bool IsConfigured =>
+        Account1.IsAuthenticated &&
+        Account2.IsAuthenticated &&
+        !string.IsNullOrWhiteSpace(Account1.SourceFolderId) &&
+        !string.IsNullOrWhiteSpace(Account2.DestinationFolderId);
 }
 
-public class AccountSettings
+public class AccountConfig
 {
-    public string CredentialsFile { get; set; } = string.Empty;
-    public string TokenFolder { get; set; } = string.Empty;
     public string UserEmail { get; set; } = string.Empty;
-
-    // Conta 1: pasta de origem
+    public string TokenFolder { get; set; } = string.Empty;
     public string? SourceFolderId { get; set; }
-
-    // Conta 2: pasta de destino
+    public string? SourceFolderName { get; set; }
     public string? DestinationFolderId { get; set; }
+    public string? DestinationFolderName { get; set; }
+    public bool IsAuthenticated { get; set; }
+
+    [JsonIgnore]
+    public bool IsAccount1 => SourceFolderId != null || (!IsAuthenticated && string.IsNullOrEmpty(DestinationFolderId));
 }
 
 public class MigrationOptions
 {
-    /// <summary>Deleta o arquivo da Conta 1 após upload bem-sucedido na Conta 2.</summary>
     public bool DeleteAfterMove { get; set; } = true;
-
-    /// <summary>Quantidade de arquivos processados por vez.</summary>
     public int BatchSize { get; set; } = 10;
-
-    /// <summary>Tentativas em caso de falha de rede.</summary>
     public int MaxRetries { get; set; } = 3;
-
-    /// <summary>Segundos de espera entre tentativas.</summary>
     public int RetryDelaySeconds { get; set; } = 5;
-
-    /// <summary>Log de progresso a cada N arquivos.</summary>
-    public int LogProgressEveryNFiles { get; set; } = 5;
+    public int WorkerIntervalMinutes { get; set; } = 5;
 }
 
-public class DriveFileInfo
+public class DriveFolder
 {
     public string Id { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
-    public string? MimeType { get; set; }
-    public long? Size { get; set; }
-
-    public string DisplaySize => Size.HasValue
-        ? Size.Value switch
-        {
-            < 1024 => $"{Size.Value} B",
-            < 1024 * 1024 => $"{Size.Value / 1024.0:F1} KB",
-            < 1024 * 1024 * 1024 => $"{Size.Value / (1024.0 * 1024):F1} MB",
-            _ => $"{Size.Value / (1024.0 * 1024 * 1024):F2} GB"
-        }
-        : "–";
+    public string? ParentId { get; set; }
 }
 
 public class MigrationResult
 {
+    public DateTime RunAt { get; set; } = DateTime.Now;
     public int TotalFiles { get; set; }
     public int Succeeded { get; set; }
     public int Failed { get; set; }
-    public int Skipped { get; set; }
     public TimeSpan Elapsed { get; set; }
     public List<string> Errors { get; set; } = [];
-
     public bool HasErrors => Errors.Count > 0;
+    public bool NothingToDo => TotalFiles == 0;
+}
+
+public class AuthFlowState
+{
+    public string AccountKey { get; set; } = string.Empty; // "account1" | "account2"
+    public string UserEmail { get; set; } = string.Empty;
+    public string AuthUrl { get; set; } = string.Empty;
+    public string? Code { get; set; }
+    public bool UseManual { get; set; } = true;
 }

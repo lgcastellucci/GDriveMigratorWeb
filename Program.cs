@@ -1,161 +1,38 @@
-using GDriveMigrator.Models;
 using GDriveMigrator.Services;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
+using GDriveMigrator.Workers;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Banner
-// ─────────────────────────────────────────────────────────────────────────────
-Console.ForegroundColor = ConsoleColor.Cyan;
-Console.WriteLine("""
+var builder = WebApplication.CreateBuilder(args);
 
-  ╔══════════════════════════════════════════════════╗
-  ║            G D r i v e M i g r a t o r           ║
-  ║    Move arquivos entre duas contas do Drive      ║
-  ╚══════════════════════════════════════════════════╝
+builder.Services.AddRazorPages();
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddSingleton<SessionService>();
+builder.Services.AddSingleton<AuthService>();
+builder.Services.AddSingleton<DriveOperationsService>();
+builder.Services.AddHostedService<MigrationWorker>();
 
-""");
-Console.ResetColor();
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Dependency Injection
-// ─────────────────────────────────────────────────────────────────────────────
-var services = new ServiceCollection();
-
-services.AddLogging(builder =>
+// Guarda o flow OAuth em memória durante o fluxo de auth (browser redirect)
+builder.Services.AddDistributedMemoryCache();
+builder.Services.AddSession(o =>
 {
-    builder.SetMinimumLevel(LogLevel.Warning); // silencia logs internos do Google SDK
-    builder.AddSimpleConsole(opts =>
-    {
-        opts.SingleLine = true;
-        opts.TimestampFormat = "HH:mm:ss ";
-    });
+    o.IdleTimeout = TimeSpan.FromMinutes(30);
+    o.Cookie.HttpOnly = true;
+    o.Cookie.IsEssential = true;
 });
 
-services.AddSingleton<SetupService>();
-services.AddSingleton<AuthService>();
-services.AddSingleton<DriveOperationsService>();
-services.AddSingleton<MigrationOrchestrator>();
-
-var sp = services.BuildServiceProvider();
-
-var setupService = sp.GetRequiredService<SetupService>();
-var authService = sp.GetRequiredService<AuthService>();
-var orchestrator = sp.GetRequiredService<MigrationOrchestrator>();
-var logger = sp.GetRequiredService<ILogger<Program>>();
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Ctrl+C
-// ─────────────────────────────────────────────────────────────────────────────
-using var cts = new CancellationTokenSource();
-Console.CancelKeyPress += (_, e) =>
+builder.Logging.AddSimpleConsole(o =>
 {
-    e.Cancel = true;
-    Console.ForegroundColor = ConsoleColor.Yellow;
-    Console.WriteLine("\n  Cancelando...");
-    Console.ResetColor();
-    cts.Cancel();
-};
+    o.SingleLine = true;
+    o.TimestampFormat = "HH:mm:ss ";
+});
 
-try
-{
-    // ── 1. Wizard de configuração ─────────────────────────────────────────
-    var settings = await setupService.LoadOrSetupAsync(cts.Token);
+var app = builder.Build();
 
-    // ── 2. Autenticação Conta 1 ───────────────────────────────────────────
-    PrintStep("1/4", "Autenticando Conta 1");
-    PrintInfo($"     Abrindo browser para: {settings.Account1.UserEmail}");
-    PrintInfo("     Faça login, autorize o acesso e volte aqui.");
-    Console.WriteLine();
+app.UseStaticFiles();
+app.UseSession();
+app.UseRouting();
+app.MapRazorPages();
 
-    var sourceDrive = await authService.CreateDriveServiceAsync(settings.Account1, "GDriveMigrator", cts.Token);
+// Redireciona raiz para setup se não configurado, ou para dashboard
+app.MapGet("/", (SessionService s) => Results.Redirect(s.Session.IsConfigured ? "/Dashboard" : "/Setup"));
 
-    PrintOk("Conta 1 autenticada com sucesso.");
-
-    // ── 3. Autenticação Conta 2 ───────────────────────────────────────────
-    Console.WriteLine();
-    PrintStep("2/4", "Autenticando Conta 2");
-    PrintInfo($"     Abrindo browser para: {settings.Account2.UserEmail}");
-    PrintInfo("     Faça login com a segunda conta, autorize e volte aqui.");
-    Console.WriteLine();
-
-    var destinationDrive = await authService.CreateDriveServiceAsync(settings.Account2, "GDriveMigrator", cts.Token);
-
-    PrintOk("Conta 2 autenticada com sucesso.");
-
-    // ── 4. Confirmação final ──────────────────────────────────────────────
-    Console.WriteLine();
-    PrintStep("3/4", "Confirmação");
-    Console.WriteLine($"  Mover arquivos de:");
-    Console.ForegroundColor = ConsoleColor.White;
-    Console.WriteLine($"    {settings.Account1.UserEmail}  →  pasta [{settings.Account1.SourceFolderId}]");
-    Console.WriteLine($"        ↓");
-    Console.WriteLine($"    {settings.Account2.UserEmail}  →  pasta [{settings.Account2.DestinationFolderId}]");
-    Console.ResetColor();
-    Console.WriteLine($"  Deletar originais: {(settings.Options.DeleteAfterMove ? "Sim" : "Não")}");
-    Console.WriteLine();
-    Console.ForegroundColor = ConsoleColor.Yellow;
-    Console.Write("  Iniciar migração? (S/n): ");
-    Console.ResetColor();
-
-    var confirm = Console.ReadLine()?.Trim().ToLower();
-    if (confirm is "n" or "não" or "nao" or "no")
-    {
-        Console.WriteLine("  Operação cancelada.");
-        return 1;
-    }
-
-    // ── 5. Migração ───────────────────────────────────────────────────────
-    Console.WriteLine();
-    PrintStep("4/4", "Migrando arquivos...");
-
-    var result = await orchestrator.RunAsync(sourceDrive, destinationDrive, settings, cts.Token);
-
-    //Aguardar 10 segundos para fechar, assim é possivel ver o resultado final
-    Console.WriteLine();
-    PrintInfo($"Migração concluída em {result.Elapsed.TotalSeconds:F1} segundos."); 
-    Console.WriteLine();
-
-    return result.HasErrors ? 2 : 0;
-}
-catch (OperationCanceledException)
-{
-    Console.ForegroundColor = ConsoleColor.Yellow;
-    Console.WriteLine("  Migração interrompida.");
-    Console.ResetColor();
-    return 3;
-}
-catch (Exception ex)
-{
-    Console.ForegroundColor = ConsoleColor.Red;
-    Console.WriteLine($"\n  Erro: {ex.Message}");
-    Console.ResetColor();
-    logger.LogError(ex, "Erro não tratado");
-    return 99;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers de output
-// ─────────────────────────────────────────────────────────────────────────────
-static void PrintStep(string step, string title)
-{
-    Console.ForegroundColor = ConsoleColor.Cyan;
-    Console.Write($"  [{step}] ");
-    Console.ForegroundColor = ConsoleColor.White;
-    Console.WriteLine(title);
-    Console.ResetColor();
-}
-
-static void PrintInfo(string text)
-{
-    Console.ForegroundColor = ConsoleColor.DarkGray;
-    Console.WriteLine(text);
-    Console.ResetColor();
-}
-
-static void PrintOk(string text)
-{
-    Console.ForegroundColor = ConsoleColor.Green;
-    Console.WriteLine($"  ✓ {text}");
-    Console.ResetColor();
-}
+app.Run();

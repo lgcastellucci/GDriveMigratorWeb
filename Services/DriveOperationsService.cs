@@ -1,23 +1,49 @@
 using Google.Apis.Drive.v3;
 using GDriveMigrator.Models;
-using Microsoft.Extensions.Logging;
 using GFile = Google.Apis.Drive.v3.Data.File;
 
 namespace GDriveMigrator.Services;
 
-public class DriveOperationsService(ILogger<DriveOperationsService> logger)
+public class DriveOperationsService
 {
-    private const int PageSize = 100;
+    // ── Listar subpastas ──────────────────────────────────────────────────
 
-    // ──────────────────────────────────────────────
-    // Listagem
-    // ──────────────────────────────────────────────
-
-    /// <summary>Lista todos os arquivos (não pastas) de uma pasta do Drive.</summary>
-    public async Task<List<DriveFileInfo>> ListFilesInFolderAsync(DriveService drive, string folderId, CancellationToken ct = default)
+    public async Task<List<DriveFolder>> ListFoldersAsync(
+        DriveService drive,
+        string parentId = "root",
+        CancellationToken ct = default)
     {
-        logger.LogInformation("Listando arquivos na pasta: {FolderId}", folderId);
+        var result = new List<DriveFolder>();
+        string? pageToken = null;
 
+        do
+        {
+            var req = drive.Files.List();
+            req.Q = $"'{parentId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false";
+            req.Fields = "nextPageToken, files(id, name, parents)";
+            req.PageSize = 100;
+            req.PageToken = pageToken;
+            req.SupportsAllDrives = true;
+            req.IncludeItemsFromAllDrives = true;
+            req.OrderBy = "name";
+
+            var resp = await req.ExecuteAsync(ct);
+            foreach (var f in resp.Files ?? [])
+                result.Add(new DriveFolder { Id = f.Id, Name = f.Name, ParentId = parentId });
+
+            pageToken = resp.NextPageToken;
+        } while (pageToken != null);
+
+        return result;
+    }
+
+    // ── Listar arquivos (para migração) ───────────────────────────────────
+
+    public async Task<List<DriveFileInfo>> ListFilesAsync(
+        DriveService drive,
+        string folderId,
+        CancellationToken ct = default)
+    {
         var result = new List<DriveFileInfo>();
         string? pageToken = null;
 
@@ -26,150 +52,83 @@ public class DriveOperationsService(ILogger<DriveOperationsService> logger)
             var req = drive.Files.List();
             req.Q = $"'{folderId}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false";
             req.Fields = "nextPageToken, files(id, name, mimeType, size)";
-            req.PageSize = PageSize;
+            req.PageSize = 100;
             req.PageToken = pageToken;
-            req.IncludeItemsFromAllDrives = true;
             req.SupportsAllDrives = true;
+            req.IncludeItemsFromAllDrives = true;
 
-            try
-            {
-                var response = await req.ExecuteAsync(ct);
+            var resp = await req.ExecuteAsync(ct);
+            foreach (var f in resp.Files ?? [])
+                result.Add(new DriveFileInfo { Id = f.Id, Name = f.Name, MimeType = f.MimeType, Size = f.Size });
 
-                foreach (var f in response.Files ?? [])
-                {
-                    result.Add(new DriveFileInfo
-                    {
-                        Id = f.Id,
-                        Name = f.Name,
-                        MimeType = f.MimeType,
-                        Size = f.Size
-                    });
-                }
-
-                pageToken = response.NextPageToken;
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Erro ao listar arquivos na pasta {FolderId}: {Message}", folderId, ex.Message);
-                throw;
-            }
-
-
-
+            pageToken = resp.NextPageToken;
         } while (pageToken != null);
 
-        logger.LogInformation("Total de arquivos encontrados: {Count}", result.Count);
         return result;
     }
 
-    // ──────────────────────────────────────────────
-    // Download
-    // ──────────────────────────────────────────────
+    // ── Download ──────────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Faz download do arquivo para um MemoryStream.
-    /// Arquivos do Google Workspace (Docs, Sheets, Slides) são exportados como PDF.
-    /// Arquivos binários comuns são baixados diretamente.
-    /// </summary>
-    public async Task<(Stream Content, string FileName, string MimeType)> DownloadFileAsync(
-        DriveService drive,
-        DriveFileInfo file,
-        CancellationToken ct = default)
+    public async Task<(Stream Content, string FileName, string MimeType)> DownloadAsync(
+        DriveService drive, DriveFileInfo file, CancellationToken ct = default)
     {
         var ms = new MemoryStream();
 
-        if (IsGoogleWorkspaceFile(file.MimeType))
+        if (IsWorkspace(file.MimeType))
         {
-            // Exporta como PDF
-            var exportMime = GetExportMimeType(file.MimeType!);
-            var exportFileName = $"{file.Name}.pdf";
-
-            logger.LogDebug("Exportando arquivo Google Workspace: {Name} → PDF", file.Name);
-
-            var exportReq = drive.Files.Export(file.Id, exportMime);
-            await exportReq.DownloadAsync(ms, ct);
-
+            var mime = ExportMime(file.MimeType!);
+            await drive.Files.Export(file.Id, mime).DownloadAsync(ms, ct);
             ms.Position = 0;
-            return (ms, exportFileName, exportMime);
+            return (ms, file.Name + ".pdf", mime);
         }
-        else
-        {
-            logger.LogDebug("Baixando arquivo: {Name}", file.Name);
 
-            var getReq = drive.Files.Get(file.Id);
-            getReq.SupportsAllDrives = true;
-            await getReq.DownloadAsync(ms, ct);
-
-            ms.Position = 0;
-            return (ms, file.Name, file.MimeType ?? "application/octet-stream");
-        }
+        var get = drive.Files.Get(file.Id);
+        get.SupportsAllDrives = true;
+        await get.DownloadAsync(ms, ct);
+        ms.Position = 0;
+        return (ms, file.Name, file.MimeType ?? "application/octet-stream");
     }
 
-    // ──────────────────────────────────────────────
-    // Upload
-    // ──────────────────────────────────────────────
+    // ── Upload ────────────────────────────────────────────────────────────
 
-    /// <summary>Faz upload de um arquivo para a pasta de destino.</summary>
-    public async Task<string> UploadFileAsync(
-        DriveService drive,
-        Stream content,
-        string fileName,
-        string mimeType,
-        string destinationFolderId,
-        CancellationToken ct = default)
+    public async Task<string> UploadAsync(
+        DriveService drive, Stream content, string fileName,
+        string mimeType, string folderId, CancellationToken ct = default)
     {
-        logger.LogDebug("Enviando arquivo: {Name} para pasta {FolderId}", fileName, destinationFolderId);
+        var meta = new GFile { Name = fileName, Parents = [folderId] };
+        var req = drive.Files.Create(meta, content, mimeType);
+        req.Fields = "id";
+        req.SupportsAllDrives = true;
+        var upload = await req.UploadAsync(ct);
 
-        var fileMetadata = new GFile
-        {
-            Name = fileName,
-            Parents = [destinationFolderId]
-        };
+        if (upload.Status != Google.Apis.Upload.UploadStatus.Completed)
+            throw new Exception($"Falha no upload de '{fileName}': {upload.Exception?.Message}");
 
-        var uploadReq = drive.Files.Create(fileMetadata, content, mimeType);
-        uploadReq.Fields = "id, name";
-        uploadReq.SupportsAllDrives = true;
-
-        var uploadResult = await uploadReq.UploadAsync(ct);
-
-        if (uploadResult.Status != Google.Apis.Upload.UploadStatus.Completed)
-            throw new Exception($"Falha no upload de '{fileName}': {uploadResult.Exception?.Message}");
-
-        return uploadReq.ResponseBody?.Id
-            ?? throw new Exception($"Upload de '{fileName}' concluído mas sem ID retornado.");
+        return req.ResponseBody?.Id ?? throw new Exception("Upload sem ID retornado.");
     }
 
-    // ──────────────────────────────────────────────
-    // Deleção
-    // ──────────────────────────────────────────────
+    // ── Delete ────────────────────────────────────────────────────────────
 
-    /// <summary>Move o arquivo para a lixeira (soft delete) na conta de origem.</summary>
-    public async Task DeleteFileAsync(
-        DriveService drive,
-        string fileId,
-        CancellationToken ct = default)
+    public async Task DeleteAsync(DriveService drive, string fileId, CancellationToken ct = default)
     {
-        logger.LogDebug("Deletando arquivo: {FileId}", fileId);
-
-        var deleteReq = drive.Files.Delete(fileId);
-        deleteReq.SupportsAllDrives = true;
-        await deleteReq.ExecuteAsync(ct);
+        var req = drive.Files.Delete(fileId);
+        req.SupportsAllDrives = true;
+        await req.ExecuteAsync(ct);
     }
 
-    // ──────────────────────────────────────────────
-    // Helpers Google Workspace
-    // ──────────────────────────────────────────────
+    // ── Helpers ───────────────────────────────────────────────────────────
 
-    private static bool IsGoogleWorkspaceFile(string? mimeType) =>
-        mimeType?.StartsWith("application/vnd.google-apps.") == true &&
-        mimeType != "application/vnd.google-apps.folder";
+    private static bool IsWorkspace(string? mime) =>
+        mime?.StartsWith("application/vnd.google-apps.") == true &&
+        mime != "application/vnd.google-apps.folder";
 
-    private static string GetExportMimeType(string googleMime) => googleMime switch
-    {
-        "application/vnd.google-apps.document" => "application/pdf",
-        "application/vnd.google-apps.spreadsheet" => "application/pdf",
-        "application/vnd.google-apps.presentation" => "application/pdf",
-        "application/vnd.google-apps.drawing" => "application/pdf",
-        _ => "application/pdf"
-    };
+    private static string ExportMime(string mime) => "application/pdf";
+}
+
+public class DriveFileInfo
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string? MimeType { get; set; }
+    public long? Size { get; set; }
 }

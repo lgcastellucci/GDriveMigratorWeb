@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GDriveMigrator — @ViewData["Title"]</title>
+    <link rel="stylesheet" href="~/app.css" />
+</head>
+<body>
+    <nav class="topbar">
+        <span class="brand">⇄ GDriveMigrator</span>
+        <div class="nav-links">
+            <a href="/Dashboard">Dashboard</a>
+            <a href="/Setup">Configuração</a>
+        </div>
+    </nav>
+
+    <main class="container">
+        @RenderBody()
+    </main>
+
+    @await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>

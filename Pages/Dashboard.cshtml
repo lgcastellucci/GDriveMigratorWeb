@@ -1,0 +1,53 @@
+@page
+@model GDriveMigrator.Pages.DashboardModel
+@{
+    ViewData["Title"] = "Dashboard";
+}
+
+<div class="page-header">
+    <h1>Dashboard</h1>
+</div>
+
+@if (!Model.IsConfigured)
+{
+    <div class="alert alert-warn">
+        ⚠ Configuração incompleta.
+        <a href="/Setup">Clique aqui para configurar.</a>
+    </div>
+}
+else
+{
+    <div class="status-grid">
+        <div class="card">
+            <div class="card-label">Conta origem</div>
+            <div class="card-value">@Model.Session.Account1.UserEmail</div>
+            <div class="card-sub">📁 @(Model.Session.Account1.SourceFolderName ?? Model.Session.Account1.SourceFolderId)</div>
+        </div>
+        <div class="card">
+            <div class="card-label">Conta destino</div>
+            <div class="card-value">@Model.Session.Account2.UserEmail</div>
+            <div class="card-sub">📁 @(Model.Session.Account2.DestinationFolderName ?? Model.Session.Account2.DestinationFolderId)</div>
+        </div>
+        <div class="card">
+            <div class="card-label">Intervalo</div>
+            <div class="card-value">@Model.Session.Options.WorkerIntervalMinutes min</div>
+            <div class="card-sub">Worker ativo</div>
+        </div>
+        <div class="card">
+            <div class="card-label">Deletar após mover</div>
+            <div class="card-value">@(Model.Session.Options.DeleteAfterMove ? "Sim" : "Não")</div>
+            <div class="card-sub">&nbsp;</div>
+        </div>
+    </div>
+}
+
+<div class="section-title">Log do worker</div>
+<div class="log-box" id="logBox">
+    <em>Os logs do worker aparecem no terminal onde o app foi iniciado.</em>
+</div>
+
+<div class="actions">
+    <form method="post" asp-page-handler="Reset" onsubmit="return confirm('Resetar toda a configuração?')">
+        <button type="submit" class="btn btn-danger">🗑 Resetar configuração</button>
+    </form>
+</div>

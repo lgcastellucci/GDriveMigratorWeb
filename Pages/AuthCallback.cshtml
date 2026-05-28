@@ -1,0 +1,15 @@
+@page
+@model GDriveMigrator.Pages.AuthCallbackModel
+@{
+    ViewData["Title"] = "Autenticando...";
+}
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+    <div class="alert alert-error">@Model.ErrorMessage</div>
+    <a href="/Setup" class="btn btn-primary">Voltar para configuração</a>
+}
+else
+{
+    <div class="alert alert-ok">✓ Autenticando... redirecionando.</div>
+}

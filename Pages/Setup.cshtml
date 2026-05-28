@@ -1,0 +1,116 @@
+@page
+@model GDriveMigrator.Pages.SetupModel
+@{
+    ViewData["Title"] = "Configuração";
+}
+
+<div class="page-header">
+    <h1>Configuração</h1>
+    <p class="subtitle">Configure as duas contas do Google Drive e as pastas de origem e destino.</p>
+</div>
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+    <div class="alert alert-error">@Model.ErrorMessage</div>
+}
+
+<!-- ── Progresso ── -->
+<div class="steps">
+    <div class="step @(Model.Step >= 1 ? "done" : "") @(Model.Step == 1 ? "active" : "")">
+        <span class="step-n">1</span> Conta 1
+    </div>
+    <div class="step-sep">→</div>
+    <div class="step @(Model.Step >= 2 ? "done" : "") @(Model.Step == 2 ? "active" : "")">
+        <span class="step-n">2</span> Conta 2
+    </div>
+    <div class="step-sep">→</div>
+    <div class="step @(Model.Step >= 3 ? "done" : "") @(Model.Step == 3 ? "active" : "")">
+        <span class="step-n">3</span> Opções
+    </div>
+</div>
+
+<!-- ── Step 1: Conta 1 ── -->
+@if (Model.Step == 1)
+{
+    <div class="card-form">
+        <h2>Conta 1 — Origem</h2>
+        <p class="hint">De onde os arquivos serão movidos.</p>
+
+        <form method="post" asp-page-handler="SaveAccount1">
+            <div class="field">
+                <label>E-mail da Conta 1</label>
+                <input type="email" name="email" value="@Model.Session.Account1.UserEmail"
+                       placeholder="conta1@gmail.com" required />
+            </div>
+
+            @if (Model.Session.Account1.IsAuthenticated)
+            {
+                <div class="alert alert-ok">✓ Conta autenticada: @Model.Session.Account1.UserEmail</div>
+            }
+
+            <div class="btn-row">
+                <button type="submit" class="btn btn-primary">Continuar →</button>
+            </div>
+        </form>
+    </div>
+}
+
+<!-- ── Step 2: Conta 2 ── -->
+@if (Model.Step == 2)
+{
+    <div class="card-form">
+        <h2>Conta 2 — Destino</h2>
+        <p class="hint">Para onde os arquivos serão enviados.</p>
+
+        <form method="post" asp-page-handler="SaveAccount2">
+            <div class="field">
+                <label>E-mail da Conta 2</label>
+                <input type="email" name="email" value="@Model.Session.Account2.UserEmail"
+                       placeholder="conta2@gmail.com" required />
+            </div>
+
+            @if (Model.Session.Account2.IsAuthenticated)
+            {
+                <div class="alert alert-ok">✓ Conta autenticada: @Model.Session.Account2.UserEmail</div>
+            }
+
+            <div class="btn-row">
+                <a href="?step=1" class="btn btn-secondary">← Voltar</a>
+                <button type="submit" class="btn btn-primary">Continuar →</button>
+            </div>
+        </form>
+    </div>
+}
+
+<!-- ── Step 3: Opções ── -->
+@if (Model.Step == 3)
+{
+    <div class="card-form">
+        <h2>Opções de migração</h2>
+
+        <form method="post" asp-page-handler="SaveOptions">
+            <div class="field">
+                <label>Deletar arquivo da origem após mover?</label>
+                <select name="deleteAfterMove">
+                    <option value="true" selected="@(Model.Session.Options.DeleteAfterMove)">Sim</option>
+                    <option value="false" selected="@(!Model.Session.Options.DeleteAfterMove)">Não (copiar)</option>
+                </select>
+            </div>
+            <div class="field">
+                <label>Intervalo do worker (minutos)</label>
+                <input type="number" name="intervalMinutes" min="1" max="1440"
+                       value="@Model.Session.Options.WorkerIntervalMinutes" />
+            </div>
+            <div class="field">
+                <label>Tentativas em caso de falha</label>
+                <input type="number" name="maxRetries" min="1" max="10"
+                       value="@Model.Session.Options.MaxRetries" />
+            </div>
+
+            <div class="btn-row">
+                <a href="?step=2" class="btn btn-secondary">← Voltar</a>
+                <button type="submit" class="btn btn-primary">Salvar e ir para autenticação →</button>
+            </div>
+        </form>
+    </div>
+}
