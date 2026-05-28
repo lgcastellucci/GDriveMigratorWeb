@@ -6,90 +6,109 @@ Aplicação .NET 10 que conecta a duas contas do Google Drive e move todos os ar
 
 ## Pré-requisitos
 
-- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) instalado
-- Duas contas do Google (ou Google Workspace)
-- Acesso ao [Google Cloud Console](https://console.cloud.google.com)
+- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
+- O arquivo `credentials.json` do Google Cloud Console (fornecido pelo desenvolvedor)
 
 ---
 
 ## 1. Configurar o Google Cloud Console
 
-Você precisa criar **um projeto** com credenciais OAuth2 para cada conta.  
-Pode usar o mesmo projeto para as duas, ou criar projetos separados.
+> **Feito uma única vez pelo desenvolvedor — não pelo usuário final.**
 
-
----
-
-## 2. Obter os IDs das pastas
-
-O ID de uma pasta do Google Drive fica na URL quando você abre a pasta:
-
-```
-https://drive.google.com/drive/folders/1A2B3C4D5E6F7G8H9I0J
-                                        ↑ este é o ID
-```
+1. Acesse [console.cloud.google.com](https://console.cloud.google.com) e crie um projeto
+2. Vá em **APIs e Serviços → Biblioteca**, pesquise e ative a **Google Drive API**
+3. Vá em **APIs e Serviços → Credenciais → + Criar Credenciais → ID do cliente OAuth**
+4. Tipo: **App para computador** → clique em Criar → baixe o JSON e renomeie para `credentials.json`
+5. Em **Tela de consentimento OAuth → Usuários de teste**, adicione os e-mails das contas que usarão o app
 
 ---
 
-## 3. Configurar a aplicação
+## 2. Configurar a aplicação
 
-Edite o arquivo `src/GDriveMigrator/appsettings.json`:
-
-```json
-{
-  "Migration": {
-    "Account1": {
-      "TokenFolder": "token_account1",
-      "UserEmail": "sua-conta1@gmail.com",
-      "SourceFolderId": "ID_REAL_DA_PASTA_ORIGEM"
-    },
-    "Account2": {
-      "TokenFolder": "token_account2",
-      "UserEmail": "sua-conta2@gmail.com",
-      "DestinationFolderId": "ID_REAL_DA_PASTA_DESTINO"
-    },
-    "Options": {
-      "DeleteAfterMove": true,
-      "BatchSize": 10,
-      "MaxRetries": 3,
-      "RetryDelaySeconds": 5,
-      "LogProgressEveryNFiles": 5
-    }
-  }
-}
-```
-
-Copie os arquivos de credenciais para a pasta do projeto:
+Coloque o `credentials.json` na raiz do projeto:
 
 ```
-src/GDriveMigrator/
-├── credentials.json   ← coloque aqui
-├── appsettings.json
+GDriveMigrator/
+├── credentials.json   ← aqui
+├── GDriveMigrator.csproj
+├── Program.cs
 └── ...
 ```
 
 ---
 
-## 4. Executar
+## 3. Executar
 
 ```bash
-cd src/GDriveMigrator
 dotnet run
 ```
+
+O app guia tudo pelo terminal — não é necessário editar nenhum arquivo de configuração.
 
 ### Primeira execução
 
-Na primeira vez, o app abrirá o navegador **duas vezes** (uma para cada conta) para o fluxo OAuth2. Aceite as permissões para cada conta. Os tokens ficam salvos nas pastas `token_account1` e `token_account2` — nas próximas execuções o login é automático.
+O assistente pergunta passo a passo:
+
+```
+  ┌─ Conta 1 — Origem
+  E-mail da Conta 1: conta1@gmail.com
+
+  ┌─ Pasta de origem (Conta 1)
+  Pode colar a URL completa ou só o ID:
+    URL : https://drive.google.com/drive/folders/1A2B3C4D5E6
+    ID  : 1A2B3C4D5E6
+  URL ou ID da pasta de origem: https://drive.google.com/drive/folders/1A2B3C4D5E6
+  → ID extraído: 1A2B3C4D5E6
+
+  ┌─ Conta 2 — Destino
+  E-mail da Conta 2: conta2@gmail.com
+
+  ┌─ Pasta de destino (Conta 2)
+  URL ou ID da pasta de destino: 9Z8Y7X6W5V4
+
+  Deletar arquivos da Conta 1 após mover? (S/n): s
+```
+
+Em seguida, o app exibe um link de autorização para cada conta:
+
+```
+  [1/4] Autenticando Conta 1
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │  Copie o link abaixo e abra no seu browser:                 │
+  └─────────────────────────────────────────────────────────────┘
+
+  https://accounts.google.com/o/oauth2/auth?client_id=...
+
+  Passos:
+    1. Abra o link acima no browser
+    2. Faça login com: conta1@gmail.com
+    3. Autorize o acesso ao Google Drive
+    4. Copie o código exibido pelo Google
+    5. Cole o código abaixo e pressione Enter
+
+  Código de autorização: ____
+```
 
 ### Execuções seguintes
 
-```bash
-dotnet run
+A configuração fica salva em `session.json` e os tokens em `.tokens/`. O app pergunta se quer reutilizar:
+
 ```
+  ┌─ Sessão anterior encontrada
+  Conta 1 : conta1@gmail.com
+  Conta 2 : conta2@gmail.com
+  Origem  : 1A2B3C4D5E6
+  Destino : 9Z8Y7X6W5V4
+
+  Usar essa configuração? (S/n):
+```
+
+Nenhum código de autorização é pedido novamente enquanto os tokens forem válidos.
 
 ---
 
-## Opções de configuração
+## Opções de migração
 
 | Opção | Padrão | Descrição |
 |---|---|---|
@@ -99,13 +118,45 @@ dotnet run
 | `RetryDelaySeconds` | `5` | Segundos entre tentativas |
 | `LogProgressEveryNFiles` | `5` | Frequência do log de progresso |
 
-Para **copiar** sem deletar, defina `"DeleteAfterMove": false`.
+Para **copiar** sem deletar, responda `n` quando o wizard perguntar sobre deletar — ou edite diretamente o `session.json`.
+
+---
+
+## Onde encontrar o ID de uma pasta
+
+Abra a pasta no Google Drive. O ID é a parte final da URL:
+
+```
+https://drive.google.com/drive/folders/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms
+                                        ↑ este é o ID
+```
+
+O app aceita tanto a URL completa quanto o ID puro.
 
 ---
 
 ## Arquivos Google Workspace
 
-Arquivos nativos do Google (Docs, Sheets, Slides) **não podem ser baixados em formato binário** via API. O app os exporta automaticamente como PDF antes de fazer o upload na Conta 2.
+Arquivos nativos do Google (Docs, Sheets, Slides) são exportados automaticamente como **PDF** antes do upload na Conta 2, pois não possuem formato binário para download direto.
+
+---
+
+## Estrutura do projeto
+
+```
+GDriveMigrator/
+├── GDriveMigrator.csproj
+├── GDriveMigrator.sln
+├── Program.cs                        # Entry point, DI, fluxo principal
+├── appsettings.json                  # Opções padrão
+├── Models/
+│   └── Models.cs                     # DTOs e configurações tipadas
+└── Services/
+    ├── AuthService.cs                # OAuth2 manual por conta (link no terminal)
+    ├── DriveOperationsService.cs     # List / Download / Upload / Delete
+    ├── MigrationOrchestrator.cs      # Coordena o fluxo completo
+    └── SetupService.cs               # Wizard de configuração via terminal
+```
 
 ---
 
@@ -115,25 +166,6 @@ Arquivos nativos do Google (Docs, Sheets, Slides) **não podem ser baixados em f
 dotnet publish -c Release -r win-x64 --self-contained
 dotnet publish -c Release -r linux-x64 --self-contained
 dotnet publish -c Release -r osx-x64 --self-contained
-```
-
----
-
-## Estrutura do projeto
-
-```
-GDriveMigrator/
-└── src/
-    └── GDriveMigrator/
-        ├── GDriveMigrator.csproj
-        ├── Program.cs                          # Entry point, DI, fluxo principal
-        ├── appsettings.json                    # Configurações
-        ├── Models/
-        │   └── Models.cs                       # DTOs e configurações tipadas
-        └── Services/
-            ├── AuthService.cs                  # OAuth2 por conta
-            ├── DriveOperationsService.cs       # List / Download / Upload / Delete
-            └── MigrationOrchestrator.cs        # Coordena o fluxo completo
 ```
 
 ---
